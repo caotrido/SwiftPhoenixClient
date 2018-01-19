@@ -9,6 +9,7 @@ public class Message: Serializable {
     var subject: String?
     var body: Any?
     public var message: Any?
+    public var ref: String?
 
     /**
      Initializes single entry message with a subject
@@ -27,8 +28,9 @@ public class Message: Serializable {
      - parameter message: Dictionary containing message payload
      - returns: Message
      */
-    public init(message: Any) {
+    public init(message: Any, ref: String? = nil) {
         self.message = message
+        self.ref = ref
         super.init()
         create(single: false)
     }

@@ -9,6 +9,7 @@ import Foundation
 
 public class Socket: WebSocketDelegate {
     var conn: WebSocket?
+    var headers: [String: String]?
     var endPoint: String?
     var channels: [Channel] = []
 
@@ -24,6 +25,8 @@ public class Socket: WebSocketDelegate {
 
     var messageReference: UInt64 = UInt64.min // 0 (max: 18,446,744,073,709,551,615)
 
+    var onErrorCallback: ((_ error: NSError) -> Void)?
+
     /**
      Initializes a Socket connection
      - parameter domainAndPort: Phoenix server root path and proper port
@@ -32,15 +35,31 @@ public class Socket: WebSocketDelegate {
      - parameter prot:          Connection protocol - default is HTTP
      - returns: Socket
      */
-    public init(domainAndPort:String, path:String, transport:String, prot:String = "http", params: [String: Any]? = nil) {
+    public init(domainAndPort: String,
+                path: String,
+                transport: String,
+                prot: String = "http",
+                params: [String: Any]? = nil,
+                headers: [String:String]? = nil,
+                onError: ((_ error: NSError) -> Void)? = nil) {
         self.endPoint = Path.endpointWithProtocol(prot: prot, domainAndPort: domainAndPort, path: path, transport: transport)
 
         if let parameters = params {
             self.endPoint = self.endPoint! + "?" + parameters.map({ "\($0.0)=\($0.1)" }).joined(separator: "&")
         }
 
+        self.headers = headers
+        self.onErrorCallback = onError
         resetBufferTimer()
         reconnect()
+    }
+
+    /**
+     Sets the socket headers
+     - parameter headers: Dictionary of String
+     */
+    public func setSocketHeaders(headers: [String:String]) {
+        self.headers = headers
     }
 
     /**
@@ -94,6 +113,11 @@ public class Socket: WebSocketDelegate {
         close() {
             self.conn = WebSocket(url: NSURL(string: self.endPoint!)! as URL)
             if let connection = self.conn {
+
+                if let headers = self.headers {
+                    connection.headers = headers
+                }
+
                 connection.delegate = self
                 connection.connect()
             }
@@ -137,6 +161,7 @@ public class Socket: WebSocketDelegate {
             let msg = Message(message: ["body": error.localizedDescription] as Any)
             chan.trigger(triggerEvent: "error", msg: msg)
         }
+        self.onErrorCallback?(error)
     }
 
     /**
@@ -266,13 +291,16 @@ public class Socket: WebSocketDelegate {
                 return
         }
 
-        guard let topic = jsonObject["topic"] as? String, let event = jsonObject["event"] as? String,
+        guard let topic = jsonObject["topic"] as? String,
+            let event = jsonObject["event"] as? String,
             let msg = jsonObject["payload"] as? [String: AnyObject] else {
               Logger.debug(message: "No phoenix message: \(text)")
                 return
         }
         Logger.debug(message: "JSON Object: \(jsonObject)")
-        let messagePayload = Payload(topic: topic, event: event, message: Message(message: msg))
+
+        let ref = jsonObject["ref"] as? String
+        let messagePayload = Payload(topic: topic, event: event, message: Message(message: msg, ref: ref))
         onMessage(payload: messagePayload)
     }
 
@@ -303,18 +331,11 @@ public class Socket: WebSocketDelegate {
         }
     }
 
-    func makeRef() -> UInt64 {
-        let newRef = messageReference + 1
-        messageReference = (newRef == UInt64.max) ? 0 : newRef
-        return newRef
-    }
-
     func payloadToJson(payload: Payload) -> String {
-        let ref = makeRef()
         var json: [String: Any] = [
             "topic": payload.topic,
             "event": payload.event,
-            "ref": "\(ref)"
+            "ref": "\(payload.ref)"
         ]
 
         if let msg = payload.message.message {
